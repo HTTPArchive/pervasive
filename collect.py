@@ -87,6 +87,7 @@ class Collect(object):
                 year -= 1
             self.dates.append('{}-{:02d}'.format(year, month))
         self.bq_client = None
+        self.origins = {}
 
     def process_headers(self, headers):
         result = {}
@@ -131,8 +132,44 @@ class Collect(object):
         for date in self.dates:
             self.query_date(date)
 
+    def load_date(self, date, is_latest):
+        results_file = os.path.join(self.data_dir, '{}.json'.format(date))
+        raw = []
+        with open(results_file, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+        for entry in raw:
+            url = entry['url']
+            hash = entry['body_hash']
+            num = entry['num']
+            parsed_uri = urlparse(url)
+            # URLs with Query parameters aren't candidates
+            if not parsed_uri.query:
+                origin_str = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_uri)
+                path = parsed_uri.path
+                # Only consider new origins if they are from the latest crawl
+                if origin_str not in self.origins and is_latest:
+                    self.origins[origin_str] = {}
+                if origin_str not in self.origins:
+                    continue
+                origin = self.origins[origin_str]
+                if path not in origin:
+                    origin[path] = {}
+                if date not in origin[path]:
+                    origin[path][date] = {}
+                if hash not in origin[path][date]:
+                    origin[path][date][hash] = 0
+                origin[path][date][hash] += num
+
+    def aggregate_urls(self):
+        """ Load the raw results and group them by origin """
+        is_latest = True
+        for date in self.dates:
+            self.load_date(date, is_latest)
+            is_latest = False
+
     def run(self):
         self.collect_raw_data()
+        self.aggregate_urls()
 
 if __name__ == '__main__':
     logging.basicConfig(
