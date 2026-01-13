@@ -5,7 +5,7 @@ from google.cloud import bigquery
 from urllib.parse import urlparse
 import logging
 import os
-import string
+import pandas as pd
 try:
     import ujson as json
 except BaseException:
@@ -13,17 +13,19 @@ except BaseException:
 
 class Collect(object):
     def __init__(self):
-        self.query = """
+        self.query2 = """
                         #standardSQL
                         SELECT
                             url,
-                            dest,
+                            req_h.value as dest,
                             PARSE_NUMERIC(JSON_VALUE(payload, "$._objectSize")) as size,
                             request_headers,
                             response_headers,
                             JSON_VALUE(payload, "$._body_hash") as body_hash,
                         FROM
                             `httparchive.crawl.requests`,
+                            UNNEST (request_headers) as req_h,
+                            UNNEST (response_headers) as resp_h
                         WHERE
                             date = "{}-01" AND
                             JSON_VALUE(payload, "$._body_hash") IS NOT NULL AND
@@ -35,7 +37,7 @@ class Collect(object):
                             PARSE_NUMERIC(JSON_VALUE(payload, "$._objectSize")) > 1000
                         LIMIT 10
                     """
-        self.query2 = """
+        self.query = """
                         #standardSQL
                         SELECT
                             url,
@@ -78,34 +80,55 @@ class Collect(object):
         today = date.today()
         year = today.year
         month = today.month
-        for _ in range(1):
+        for _ in range(12):
             month -= 1
             if month == 0:
                 month = 12
                 year -= 1
-            self.dates.append('{}-{}'.format(year, month))
+            self.dates.append('{}-{:02d}'.format(year, month))
         self.bq_client = None
+
+    def process_headers(self, headers):
+        result = {}
+        for header in headers:
+            name = header['name'].lower()
+            value = header['value']
+            val = '{}, {}'.format(result[name], value) if name in result else value
+            result[name] = val
+        return result
 
     def query_date(self, date):
         results_file = os.path.join(self.data_dir, '{}.json'.format(date))
         if not os.path.exists(results_file):
+            logging.info("Collecting results for %s...", date)
             query = self.query.format(date)
             if self.bq_client is None:
                 self.bq_client = bigquery.Client()
-            job_config = bigquery.QueryJobConfig()
-            job_config.use_legacy_sql = False
-            job_config.allow_large_results = True
-            job = self.bq_client.query(query, job_config=job_config)
-            result = job.result()
-            results = []
-            for row in result:
-                results.append(row)
-            with open(results_file, 'w') as f:
-                json.dump(results, f)
+            job = self.bq_client.query(query)
+            # Convert query results to a Pandas DataFrame
+            df = job.to_dataframe()
+            results = json.loads(df.to_json(orient="records", date_format='iso'))
+            with open(results_file, 'w', encoding='utf-8') as f:
+                f.write('[')
+                is_first = True
+                for result in results:
+                    out = dict(result)
+                    out['request_headers'] = self.process_headers(result['request_headers'])
+                    out['response_headers'] = self.process_headers(result['response_headers'])
+                    # only allow "empty" dest if it is a compression dictionary
+                    if out['dest'] == 'empty' and 'use-as-dictionary' not in out['response_headers']:
+                        continue
+                    if is_first:
+                        is_first = False
+                        f.write('\n')
+                    else:
+                        f.write(',\n')
+                    json.dump(out, f)
+                f.write('\n]\n')
 
     def collect_raw_data(self):
         """ Run the raw bigquery queries and store the results locally """
-        for date in self.dates():
+        for date in self.dates:
             self.query_date(date)
 
     def run(self):
