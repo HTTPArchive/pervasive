@@ -13,30 +13,7 @@ except BaseException:
 
 class Collect(object):
     def __init__(self):
-        self.query2 = """
-                        #standardSQL
-                        SELECT
-                            url,
-                            req_h.value as dest,
-                            PARSE_NUMERIC(JSON_VALUE(payload, "$._objectSize")) as size,
-                            request_headers,
-                            response_headers,
-                            JSON_VALUE(payload, "$._body_hash") as body_hash,
-                        FROM
-                            `httparchive.crawl.requests`,
-                            UNNEST (request_headers) as req_h,
-                            UNNEST (response_headers) as resp_h
-                        WHERE
-                            date = "{}-01" AND
-                            JSON_VALUE(payload, "$._body_hash") IS NOT NULL AND
-                            lower(resp_h.name) = "cache-control" AND
-                            lower(resp_h.value) LIKE "%public%" AND
-                            lower(req_h.name) = "sec-fetch-dest" AND
-                            (lower(req_h.value) = "script" OR lower(req_h.value) = "style" OR lower(req_h.value) = "empty") AND
-                            PARSE_NUMERIC(JSON_VALUE(payload, "$._responseCode")) = 200 AND
-                            PARSE_NUMERIC(JSON_VALUE(payload, "$._objectSize")) > 1000
-                        LIMIT 10
-                    """
+        self.pervasive_count = 100000
         self.query = """
                         #standardSQL
                         SELECT
@@ -86,8 +63,11 @@ class Collect(object):
                 month = 12
                 year -= 1
             self.dates.append('{}-{:02d}'.format(year, month))
+        self.current_date = self.dates[0]
         self.bq_client = None
         self.origins = {}
+        self.urls = {}
+        self.patterns = {}
 
     def process_headers(self, headers):
         result = {}
@@ -119,6 +99,16 @@ class Collect(object):
                     # only allow "empty" dest if it is a compression dictionary
                     if out['dest'] == 'empty' and 'use-as-dictionary' not in out['response_headers']:
                         continue
+                    # Exclude requests with query parameters
+                    if '?' in out['url']:
+                        continue
+                    # Exclude any responses with a set-cookie response header
+                    if 'set-cookie' in out['response_headers']:
+                        continue
+                    # Exclude any responses that are not "cache-control: public"
+                    if 'cache-control' not in out['response_headers'] or 'public' not in out['response_headers']['cache-control']:
+                        continue
+                    # write the candidate
                     if is_first:
                         is_first = False
                         f.write('\n')
@@ -132,7 +122,7 @@ class Collect(object):
         for date in self.dates:
             self.query_date(date)
 
-    def load_date(self, date, is_latest):
+    def load_date(self, date):
         results_file = os.path.join(self.data_dir, '{}.json'.format(date))
         raw = []
         with open(results_file, 'r', encoding='utf-8') as f:
@@ -142,30 +132,62 @@ class Collect(object):
             hash = entry['body_hash']
             num = entry['num']
             parsed_uri = urlparse(url)
-            # URLs with Query parameters aren't candidates
-            if not parsed_uri.query:
-                origin_str = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_uri)
-                path = parsed_uri.path
-                # Only consider new origins if they are from the latest crawl
-                if origin_str not in self.origins and is_latest:
-                    self.origins[origin_str] = {}
-                if origin_str not in self.origins:
-                    continue
-                origin = self.origins[origin_str]
-                if path not in origin:
-                    origin[path] = {}
-                if date not in origin[path]:
-                    origin[path][date] = {}
-                if hash not in origin[path][date]:
-                    origin[path][date][hash] = 0
-                origin[path][date][hash] += num
+            origin_str = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_uri)
+            path = parsed_uri.path
+            # Only consider new origins if they are from the latest crawl
+            if origin_str not in self.origins and date == self.current_date:
+                self.origins[origin_str] = {}
+            if origin_str not in self.origins:
+                continue
+            origin = self.origins[origin_str]
+            if path not in origin:
+                origin[path] = {}
+            if date not in origin[path]:
+                origin[path][date] = {}
+            if hash not in origin[path][date]:
+                origin[path][date][hash] = 0
+            origin[path][date][hash] += num
+
+    def find_static_urls(self):
+        """ Find URLs that were the same and pervasive for all months """
+        for origin in self.origins:
+            for path in list(self.origins[origin].keys()):
+                if len(self.origins[origin][path]) == len(self.dates):
+                    is_pervasive = True
+                    for date in self.origins[origin][path]:
+                        total_count = 0
+                        for hash in self.origins[origin][path][date]:
+                            total_count += self.origins[origin][path][date][hash]
+                        if total_count < self.pervasive_count:
+                            is_pervasive = False
+                            break
+                    if is_pervasive:
+                        logging.info("Pervasive static URL: %s%s", origin, path)
+                        if origin not in self.urls:
+                            self.urls[origin] = []
+                        if path not in self.urls[origin]:
+                            self.urls[origin].append(path)
+
+    def remove_static_resources(self):
+        """ Find URLs that were present in all months and did not change """
+        for origin in self.origins:
+            for path in list(self.origins[origin].keys()):
+                if len(self.origins[origin][path]) == len(self.dates):
+                    hashes = []
+                    for date in self.origins[origin][path]:
+                        for hash in self.origins[origin][path][date]:
+                            if hash not in hashes:
+                                hashes.append(hash)
+                    if len(hashes) == 1:
+                        logging.info("Removing static URL: %s%s", origin, path)
+                        del self.origins[origin][path]
 
     def aggregate_urls(self):
         """ Load the raw results and group them by origin """
-        is_latest = True
         for date in self.dates:
-            self.load_date(date, is_latest)
-            is_latest = False
+            self.load_date(date)
+        self.find_static_urls()
+        self.remove_static_resources()
 
     def run(self):
         self.collect_raw_data()
