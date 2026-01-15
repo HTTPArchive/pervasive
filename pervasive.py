@@ -186,15 +186,105 @@ class Collect(object):
                             if hash not in hashes:
                                 hashes.append(hash)
                     if len(hashes) == 1:
-                        logging.info(f"Removing non-pervasive static URL: {origin}{path}")
+                        logging.debug(f"Removed non-pervasive static URL: {origin}{path}")
                         del self.origins[origin][path]
+
+    def remove_unversioned_urls(self):
+        """ Find URLs that have multiple hashes since they are updated in-place """
+        for origin in self.origins:
+            for path in list(self.origins[origin].keys()):
+                hashes = []
+                for date in self.origins[origin][path]:
+                    for hash in self.origins[origin][path][date]:
+                        if hash not in hashes:
+                            hashes.append(hash)
+                if len(hashes) > 1:
+                    logging.debug(f"Removed unversioned URL: {origin}{path}")
+                    del self.origins[origin][path]
+
+    def find_first_difference(self, str1, str2):
+        for index, (char1, char2) in enumerate(zip(str1, str2)):
+            if char1 != char2:
+                return index
+        return None
+
+    def find_path_pattern(self, origin, path, candidates):
+        """
+        Find the cases where one path segment has the version or hash (simple wildcard)
+        i.e. /maps/1.2.3/common.js
+        """
+        differences = []
+        path_parts = path.split('/')
+        for candidate in candidates:
+            candidate_parts = candidate.split('/')
+            if len(candidate_parts) != len(path_parts):
+                return None
+            for index in range(len(path_parts)):
+                if path_parts[index] != candidate_parts[index] and index not in differences:
+                    differences.append(index)
+        if len(differences) == 1 and differences[0] != len(path_parts) - 1:
+            pattern = path.replace(path_parts[differences[0]], "*")
+            return pattern
 
     def find_patterns(self):
         """
         Take the remaining requests and see if there are similar urls that
         are pervasive as a set and automate generating a pattern for them.
         """
-        pass
+        import difflib
+        import fnmatch
+        for origin in self.origins:
+            o = self.origins[origin]
+            used_paths = []
+            for path in list(o.keys()):
+                if path in o and self.current_date in o[path] and path not in used_paths:
+                    used_paths.append(path)
+                    hash = list(o[path][self.current_date].keys())[0]
+                    target_size = o[path][self.current_date][hash]['size']
+                    path_segments = len(path.split('/'))
+                    # Find candidate paths that are within 5% of the target size (assume minor changes from version to version)
+                    # with "similar" urls
+                    candidates = []
+                    for p in list(o.keys()):
+                        if p != path and p not in candidates and len(p.split('/')) == path_segments:
+                            date = list(o[p].keys())[0]
+                            hash = list(o[p][date].keys())[0]
+                            size = o[p][date][hash]['size']
+                            if (abs(size - target_size) * 100) / target_size < 5:
+                                candidates.append(p)
+                                used_paths.append(p)
+                    pattern = self.find_path_pattern(origin, path, candidates)
+                    if pattern:
+                        # Make sure the aggregate of all of the candidates meet the pervasive threshold
+                        matched_urls = []
+                        counts = []
+                        is_pervasive = True
+                        for date in self.dates:
+                            total_count = 0
+                            for p in o:
+                                if fnmatch.fnmatch(p, pattern):
+                                    matched_urls.append(p)
+                                    if date in o[p]:
+                                        hash = list(o[p][date].keys())[0]
+                                        total_count += o[p][date][hash]['count']
+                            counts.append(total_count)
+                            if total_count < self.pervasive_count:
+                                is_pervasive = False
+                        if is_pervasive:
+                            logging.info(f"Pattern {counts}: {origin}{pattern}")
+                            self.patterns.append(pattern)
+                        # clean up all of the paths that were used with the pattern
+                        for path in matched_urls:
+                            if path in o:
+                                del o[path]
+                        continue
+
+    def show_unmatched(self):
+        """ Display the remaining unmatched URLs """
+        for origin in self.origins:
+            for path in self.origins[origin]:
+                if self.current_date in self.origins[origin][path]:
+                    logging.info(f"Unmatched URL: {origin}{path}")
 
     def aggregate_urls(self):
         """ Load the raw results and group them by origin """
@@ -202,7 +292,9 @@ class Collect(object):
             self.load_date(date)
         self.find_pervasive_urls()
         self.remove_static_urls()
+        self.remove_unversioned_urls()
         self.find_patterns()
+        self.show_unmatched()
 
     def run(self):
         self.collect_raw_data()
