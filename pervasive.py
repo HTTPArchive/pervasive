@@ -13,15 +13,20 @@ try:
 except BaseException:
     import json
 
+PERVASIVE_COUNT = 100000
 MAX_URL_LENGTH = 200
-BLOCKLIST = ['chunk']
 SIZE_MATCH_PERCENT = 5
 MONTHS = 6
 MIN_STABLE_PATH = 2
+MIN_FILENAME_RATIO = 0.5    # difflib.ratio() similarity in filenames when looking for matching candidates
+MAX_FILENAME_MATCHING_BLOCKS = 3    # difflib.find_matching_blocks() maximum number of matching blocks to consider filenames "similar" (including the ending dummy block)
+MAX_FILENAME_LENGTH_DIFFERENCE = 2
+BLOCKLIST = ['chunk']
+WILDCARD_REPLACE = ['en_US']
+FILENAME_IGNORE = ['.js', '.css', '.bundle']
 
 class Collect(object):
     def __init__(self):
-        self.pervasive_count = 100000
         self.query = """
                         #standardSQL
                         SELECT
@@ -171,7 +176,7 @@ class Collect(object):
                             for hash in self.origins[origin][path][date]:
                                 total_count += self.origins[origin][path][date][hash]['count']
                         counts.append(total_count)
-                        if total_count < self.pervasive_count:
+                        if total_count < PERVASIVE_COUNT:
                             is_pervasive = False
                             break
                     if is_pervasive:
@@ -291,7 +296,8 @@ class Collect(object):
             if not is_first and (not pattern or pattern[-1] != "*"):
                 pattern += "*"
             is_first = False
-            part = file[start:end].strip("1234567890.-")
+            #part = file[start:end].strip("1234567890.-")
+            part = file[start:end]
             if len(part) > 1:
                 pattern += part
         if last != len(file):
@@ -328,11 +334,13 @@ class Collect(object):
         if len(differences) == 1 and differences[0] != len(path_parts) - 1:
             pattern = path.replace(f"/{path_parts[differences[0]]}/", "/*/")
             return pattern
-        # The case where the file name differs and, optionally, one path segment
-        if differences and len(differences) <= 2 and differences[-1] == len(path_parts) - 1:
+        # The case where the file name differs and, optionally, a small number of path segments
+        if differences[-1] == len(path_parts) - 1 and (len(differences) == 2 or len(path_parts) - len(differences) > MIN_STABLE_PATH):
             filename_pattern = self.create_filename_pattern(path, candidates)
             if filename_pattern is not None:
-                pattern = path.replace(f"/{path_parts[differences[0]]}/", "/*/")
+                pattern = path
+                for diff in differences[:-1]:
+                    pattern = pattern.replace(f"/{path_parts[diff]}/", "/*/")
                 pattern = pattern.replace(f"/{path_parts[differences[-1]]}", f"/{filename_pattern}")
                 return pattern
         return None
@@ -364,6 +372,9 @@ class Collect(object):
             o = self.origins[origin]
             for path in list(o.keys()):
                 url = f"{origin}{path}"
+                filepart = path.split('/')[-1]
+                for ignore in FILENAME_IGNORE:
+                    filepart = filepart.replace(ignore, "")
                 if url in self.destinations and path in o and self.current_date in o[path] and not self.matches_existing_pattern(url):
                     dest = self.destinations[url]
                     hash = list(o[path][self.current_date].keys())[0]
@@ -372,18 +383,43 @@ class Collect(object):
                     # Find candidate paths that are within 5% of the target size (assume minor changes from version to version)
                     # with "similar" urls
                     candidates = []
+                    target_size_min = target_size
+                    target_size_max = target_size
                     for p in list(o.keys()):
                         curl = f"{origin}{p}"
                         cdest = self.destinations[curl] if curl in self.destinations else None
-                        if p != path and p not in candidates and cdest == dest and len(p.split('/')) == path_segments:
+                        cfilepart = p.split('/')[-1]
+                        for ignore in FILENAME_IGNORE:
+                            cfilepart = cfilepart.replace(ignore, "")
+                        s = difflib.SequenceMatcher(None, filepart, cfilepart)
+                        similarity = s.ratio()
+                        block_count = len(s.get_matching_blocks())
+                        if p != path and \
+                                p not in candidates and \
+                                cdest == dest and \
+                                len(p.split('/')) == path_segments and \
+                                similarity >= MIN_FILENAME_RATIO and \
+                                block_count <= MAX_FILENAME_MATCHING_BLOCKS and \
+                                abs(len(filepart) - len(cfilepart)) <= MAX_FILENAME_LENGTH_DIFFERENCE:
                             date = list(o[p].keys())[0]
                             hash = list(o[p][date].keys())[0]
                             size = o[p][date][hash]['size']
-                            if (abs(size - target_size) * 100) / target_size <= SIZE_MATCH_PERCENT:
+                            size_delta = 0
+                            if size < target_size_min:
+                                size_delta = (target_size_min - size) * 100
+                            elif size > target_size_max:
+                                size_delta = (size - target_size_max) * 100
+                            if size_delta / target_size <= SIZE_MATCH_PERCENT:
+                                target_size_min = min(target_size_min, size)
+                                target_size_max = max(target_size_max, size)
                                 candidates.append(p)
                     if candidates:
                         pattern = self.find_path_pattern(origin, path, candidates)
                         if pattern:
+                            for sub in WILDCARD_REPLACE:
+                                pattern = pattern.replace(sub, "*")
+                            while "/*/*/" in pattern:
+                                pattern = pattern.replace("/*/*/", "/*/")
                             # Make sure the aggregate of all of the candidates meet the pervasive threshold
                             matched_urls = []
                             counts = []
@@ -397,15 +433,20 @@ class Collect(object):
                                             hash = list(o[p][date].keys())[0]
                                             total_count += o[p][date][hash]['count']
                                 counts.append(total_count)
-                                if total_count < self.pervasive_count:
+                                if total_count < PERVASIVE_COUNT:
                                     is_pervasive = False
                             if is_pervasive:
                                 logging.info(f"Pattern {counts}: {origin}{pattern}")
+                                logging.info(f"             URL: {origin}{path}")
+                                for path2 in sorted(candidates):
+                                    logging.info(f"       Candidate: {origin}{path2}")
+                                for path2 in sorted(matched_urls):
+                                    logging.info(f"         Matched: {origin}{path2}")
                                 self.patterns.append(f"{origin}{pattern}")
                             # clean up all of the paths that were used with the pattern
-                            for path in matched_urls:
-                                if path in o:
-                                    del o[path]
+                            for path2 in matched_urls:
+                                if path2 in o:
+                                    del o[path2]
                             continue
 
     def show_unmatched(self):
