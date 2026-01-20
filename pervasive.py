@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2025 Google Inc.
 from datetime import date
+from dateutil.relativedelta import relativedelta
 from google.cloud import bigquery
 from urllib.parse import urlparse
 import calendar
@@ -9,6 +10,7 @@ import logging
 import os
 import pandas as pd
 import re
+import string
 try:
     import ujson as json
 except BaseException:
@@ -492,10 +494,31 @@ class Collect(object):
     def write_patterns(self):
         """ Write the patterns to disk """
         patterns_file = os.path.join(os.path.dirname(__file__), 'patterns.txt')
+        # Write them out to a straight text file
         with open(patterns_file, "w", encoding="utf-8") as f:
             for pattern in self.patterns:
                 f.write(pattern)
                 f.write("\n")
+        # Write them out formatted for Chrome's compiled list, including expiration
+        template_file = os.path.join(os.path.dirname(__file__), 'shared_resource_checker_patterns.template')
+        cc_file = os.path.join(os.path.dirname(__file__), 'shared_resource_checker_patterns.cc')
+        with open(template_file, "r", encoding="utf-8") as f:
+            template_string = f.read()
+        template = string.Template(template_string)
+        expires = date.today() + relativedelta(years=1)
+        patterns = ""
+        is_first = True
+        for pattern in self.patterns:
+            escaped = pattern.replace("\\", "\\\\")
+            if not is_first:
+                patterns += "\n"
+            is_first = False
+            patterns += f"    \"{escaped}\\n\""
+        if not patterns:
+            patterns = '""'
+        out = template.substitute(year=expires.year, month=expires.month, day=expires.day, patterns=patterns)
+        with open(cc_file, "w", encoding="utf-8") as f:
+            f.write(out)
 
     def remove_duplicate_patterns(self):
         """ Remove patterns that are already covered by a more general (shorter) pattern """
