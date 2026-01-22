@@ -501,7 +501,7 @@ class Collect(object):
                 f.write("\n")
         # Write them out formatted for Chrome's compiled list, including expiration
         template_file = os.path.join(os.path.dirname(__file__), 'shared_resource_checker_patterns.template')
-        cc_file = os.path.join(os.path.dirname(__file__), 'shared_resource_checker_patterns.cc')
+        cc_file = os.path.join(os.path.dirname(__file__), 'shared_resource_checker_patterns.h')
         with open(template_file, "r", encoding="utf-8") as f:
             template_string = f.read()
         template = string.Template(template_string)
