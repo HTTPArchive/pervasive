@@ -229,7 +229,7 @@ class PervasiveResourceCollector:
         is_first = False
       f.write("\n]\n")
 
-  def collect_raw_data(self) -> None:
+  def _collect_raw_data(self) -> None:
     """Runs the raw bigquery queries and stores the results locally."""
     for date_str in self._dates:
       self._query_date(date_str)
@@ -670,7 +670,7 @@ class PervasiveResourceCollector:
 
   def run(self) -> None:
     """Main execution entry point."""
-    self.collect_raw_data()
+    self._collect_raw_data()
     self._aggregate_urls()
 
 
