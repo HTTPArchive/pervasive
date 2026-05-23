@@ -2,7 +2,7 @@
 echo "Setting up python venv..."
 python3 -m venv .venv
 source ".venv/bin/activate"
-python3 -m pip install pandas pyarrow db-dtypes ujson google-cloud-bigquery google-cloud-bigquery-storage wcmatch zstandard
+python3 -m pip install pandas pyarrow db-dtypes ujson google-cloud-bigquery google-cloud-bigquery-storage wcmatch zstandard pyopenssl
 
 echo "installing Google cloud cli tools..."
 sudo apt-get install apt-transport-https ca-certificates gnupg curl -y
