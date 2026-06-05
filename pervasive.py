@@ -59,10 +59,8 @@ _WILDCARD_REPLACE = ['en_US']
 # Strings to ignore when comparing file names for similarity
 _FILENAME_IGNORE = ['.js', '.css', 'bundle', '.min', '.', '-', '[', ']']
 
-_UUID_REGEX = re.compile(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-)
+_UUID_REGEX = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+                         r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 
 _NAMED_WILDCARD_REGEX = re.compile(r':[a-zA-Z_][a-zA-Z0-9_]*')
 
@@ -137,8 +135,8 @@ class PervasiveResourceCollector:
 
     This matches the pattern compilation and matching logic of Chrome's
     SimpleUrlPatternMatcher, which implements a restricted subset of the
-    URLPattern spec supporting only bare '*' wildcards (matching arbitrary depth)
-    and named wildcards (like :v, matching a single path segment).
+    URLPattern spec supporting only bare '*' wildcards (matching arbitrary
+    depth) and named wildcards (like :v, matching a single path segment).
 
     Args:
       url: The URL to check.
@@ -160,7 +158,8 @@ class PervasiveResourceCollector:
     escaped_pattern = re.escape(temp_pattern)
 
     for i in range(len(named_wildcards)):
-      escaped_pattern = escaped_pattern.replace(f'__NAMED_WILDCARD_{i}__', '[^/]+')
+      escaped_pattern = escaped_pattern.replace(f'__NAMED_WILDCARD_{i}__',
+                                                '[^/]+')
     escaped_pattern = escaped_pattern.replace('__BARE_WILDCARD__', '.*')
 
     match = re.fullmatch(escaped_pattern, url)
@@ -171,7 +170,10 @@ class PervasiveResourceCollector:
     return _UUID_REGEX.match(s) is not None
 
   def _replace_wildcards_with_names(self, pattern: str) -> str:
-    """Replaces whole-segment '*' wildcards with unique named wildcards (:v1, :v2, ...)."""
+    """Replaces whole-segment '*' wildcards with unique named wildcards.
+
+    e.g. (:v1, :v2, ...)
+    """
     parts = pattern.split('/')
     count = 1
     for i, part in enumerate(parts):
