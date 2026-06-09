@@ -148,18 +148,14 @@ class PervasiveResourceCollector:
     if '*' not in pattern and ':' not in pattern:
       return url == pattern
 
-    named_wildcards = _NAMED_WILDCARD_REGEX.findall(pattern)
-
-    temp_pattern = pattern
-    for i, name in enumerate(named_wildcards):
-      temp_pattern = temp_pattern.replace(name, f'__NAMED_WILDCARD_{i}__')
+    assert '__NAMED_WILDCARD__' not in pattern
+    assert '__BARE_WILDCARD__' not in pattern
+    temp_pattern = re.sub(_NAMED_WILDCARD_REGEX, '__NAMED_WILDCARD__', pattern)
     temp_pattern = temp_pattern.replace('*', '__BARE_WILDCARD__')
 
     escaped_pattern = re.escape(temp_pattern)
 
-    for i in range(len(named_wildcards)):
-      escaped_pattern = escaped_pattern.replace(f'__NAMED_WILDCARD_{i}__',
-                                                '[^/]+')
+    escaped_pattern = escaped_pattern.replace('__NAMED_WILDCARD__', '[^/]+')
     escaped_pattern = escaped_pattern.replace('__BARE_WILDCARD__', '.*')
 
     match = re.fullmatch(escaped_pattern, url)
@@ -174,6 +170,7 @@ class PervasiveResourceCollector:
 
     e.g. (:v1, :v2, ...)
     """
+    assert not _NAMED_WILDCARD_REGEX.search(pattern)
     parts = pattern.split('/')
     count = 1
     for i, part in enumerate(parts):
@@ -182,10 +179,7 @@ class PervasiveResourceCollector:
         count += 1
     if count == 2:
       # Only one wildcard was replaced, use ':v' instead of ':v1'
-      for i, part in enumerate(parts):
-        if part == ':v1':
-          parts[i] = ':v'
-          break
+      parts[parts.index(':v1')] = ':v'
     return '/'.join(parts)
 
 
@@ -484,6 +478,11 @@ class PervasiveResourceCollector:
     differences.sort()
 
     if not differences:
+      return None
+
+    # Do not support more that 5 path segments that need to be wildcards.
+    # We normally expect for there to be only one or two.
+    if len(differences) > 5:
       return None
 
     # Defense-in-depth fallback: Reject the pattern if any differing segment in
