@@ -62,7 +62,7 @@ _FILENAME_IGNORE = ['.js', '.css', 'bundle', '.min', '.', '-', '[', ']']
 _UUID_REGEX = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
                          r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 
-_NAMED_WILDCARD_REGEX = re.compile(r':[a-zA-Z_][a-zA-Z0-9_]*')
+_NAMED_WILDCARD_REGEX = re.compile(r'\{:[a-zA-Z_][a-zA-Z0-9_]*\}')
 
 # Compression level for the inline zstd-compressed pervasive list
 _ZSTD_COMPRESSION_LEVEL = 19
@@ -134,9 +134,8 @@ class PervasiveResourceCollector:
     """Checks if the given URL matches the provided wildcard pattern.
 
     This matches the pattern compilation and matching logic of Chrome's
-    SimpleUrlPatternMatcher, which implements a restricted subset of the
-    URLPattern spec supporting only bare '*' wildcards (matching arbitrary
-    depth) and named wildcards (like :v, matching a single path segment).
+    SimpleUrlPatternMatcher using named wildcards (like {:v}, matching within
+    a single path segment).
 
     Args:
       url: The URL to check.
@@ -145,18 +144,13 @@ class PervasiveResourceCollector:
     Returns:
       True if the URL matches the pattern, False otherwise.
     """
-    if '*' not in pattern and ':' not in pattern:
+    if '{:' not in pattern:
       return url == pattern
 
     assert '__NAMED_WILDCARD__' not in pattern
-    assert '__BARE_WILDCARD__' not in pattern
     temp_pattern = re.sub(_NAMED_WILDCARD_REGEX, '__NAMED_WILDCARD__', pattern)
-    temp_pattern = temp_pattern.replace('*', '__BARE_WILDCARD__')
-
     escaped_pattern = re.escape(temp_pattern)
-
     escaped_pattern = escaped_pattern.replace('__NAMED_WILDCARD__', '[^/]+')
-    escaped_pattern = escaped_pattern.replace('__BARE_WILDCARD__', '.*')
 
     match = re.fullmatch(escaped_pattern, url)
     return match is not None
@@ -166,21 +160,21 @@ class PervasiveResourceCollector:
     return _UUID_REGEX.match(s) is not None
 
   def _replace_wildcards_with_names(self, pattern: str) -> str:
-    """Replaces whole-segment '*' wildcards with unique named wildcards.
+    """Replaces '*' wildcards with unique named wildcards.
 
-    e.g. (:v1, :v2, ...)
+    e.g. ({:v1}, {:v2}, ...)
     """
     assert not _NAMED_WILDCARD_REGEX.search(pattern)
-    parts = pattern.split('/')
-    count = 1
-    for i, part in enumerate(parts):
-      if part == '*':
-        parts[i] = f':v{count}'
-        count += 1
-    if count == 2:
-      # Only one wildcard was replaced, use ':v' instead of ':v1'
-      parts[parts.index(':v1')] = ':v'
-    return '/'.join(parts)
+    while '**' in pattern:
+      pattern = pattern.replace('**', '*')
+    count = pattern.count('*')
+    if count == 0:
+      return pattern
+    if count == 1:
+      return pattern.replace('*', '{:v}')
+    for i in range(1, count + 1):
+      pattern = pattern.replace('*', f'{{:v{i}}}', 1)
+    return pattern
 
 
   def _is_current_crawl_done(self) -> bool:
@@ -711,9 +705,11 @@ class PervasiveResourceCollector:
     to_remove = set()
     for pattern1 in self._patterns:
       for pattern2 in self._patterns:
-        if pattern1 != pattern2 and len(pattern1) != len(pattern2):
-          shorter = pattern1 if len(pattern1) < len(pattern2) else pattern2
-          longer = pattern1 if len(pattern1) > len(pattern2) else pattern2
+        len1 = len(re.sub(_NAMED_WILDCARD_REGEX, '', pattern1))
+        len2 = len(re.sub(_NAMED_WILDCARD_REGEX, '', pattern2))
+        if pattern1 != pattern2 and len1 != len2:
+          shorter = pattern1 if len1 < len2 else pattern2
+          longer = pattern1 if len1 > len2 else pattern2
           if self._url_matches_pattern(longer, shorter):
             to_remove.add(longer)
 
