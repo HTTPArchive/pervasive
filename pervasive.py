@@ -59,8 +59,10 @@ _WILDCARD_REPLACE = ['en_US']
 # Strings to ignore when comparing file names for similarity
 _FILENAME_IGNORE = ['.js', '.css', 'bundle', '.min', '.', '-', '[', ']']
 
-_UUID_REGEX = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-                         r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+_UUID_REGEX = re.compile(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+  r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+)
 
 _NAMED_WILDCARD_REGEX = re.compile(r'\{:[a-zA-Z_][a-zA-Z0-9_]*\}')
 
@@ -176,7 +178,6 @@ class PervasiveResourceCollector:
       pattern = pattern.replace('*', f'{{:v{i}}}', 1)
     return pattern
 
-
   def _is_current_crawl_done(self) -> bool:
     """Checks if the current month's crawl is expected to be done.
 
@@ -231,9 +232,11 @@ class PervasiveResourceCollector:
     if self._bq_client is None:
       self._bq_client = bigquery.Client()
 
-    job_config = bigquery.QueryJobConfig(query_parameters=[
+    job_config = bigquery.QueryJobConfig(
+      query_parameters=[
         bigquery.ScalarQueryParameter("date", "STRING", f"{date_str}-01"),
-    ])
+      ]
+    )
     job = self._bq_client.query(_QUERY, job_config=job_config)
 
     with open(results_file, "w", encoding="utf-8") as f:
@@ -243,19 +246,25 @@ class PervasiveResourceCollector:
         out = dict(row)
 
         out["request_headers"] = self._process_headers(
-            out.get("request_headers", []))
+          out.get("request_headers", [])
+        )
         out["response_headers"] = self._process_headers(
-            out.get("response_headers", []))
+          out.get("response_headers", [])
+        )
 
-        if (out["dest"] == "empty"
-            and "use-as-dictionary" not in out["response_headers"]):
+        if (
+          out["dest"] == "empty"
+          and "use-as-dictionary" not in out["response_headers"]
+        ):
           continue
         if "?" in out["url"]:
           continue
         if "set-cookie" in out["response_headers"]:
           continue
-        if ("cache-control" not in out["response_headers"]
-            or "public" not in out["response_headers"]["cache-control"]):
+        if (
+          "cache-control" not in out["response_headers"]
+          or "public" not in out["response_headers"]["cache-control"]
+        ):
           continue
 
         if not is_first:
@@ -272,9 +281,9 @@ class PervasiveResourceCollector:
   def _load_date(self, date_str: str) -> None:
     """Loads processed JSON data for a given date into memory.
 
-        Args:
-          date_str: The date string (YYYY-MM) to load.
-        """
+    Args:
+      date_str: The date string (YYYY-MM) to load.
+    """
     results_file = os.path.join(self._data_dir, f'{date_str}.json')
     with open(results_file, 'r', encoding='utf-8') as f:
       raw = json.load(f)
@@ -314,7 +323,8 @@ class PervasiveResourceCollector:
             if date_str in self._origins[origin][path]:
               for body_hash in self._origins[origin][path][date_str]:
                 total_count += self._origins[origin][path][date_str][body_hash][
-                    'count']
+                  'count'
+                ]
             counts.append(total_count)
             if total_count < _PERVASIVE_COUNT:
               is_pervasive = False
@@ -341,8 +351,9 @@ class PervasiveResourceCollector:
               if body_hash not in hashes:
                 hashes.append(body_hash)
           if len(hashes) == 1:
-            logging.debug('Removed non-pervasive static URL: %s%s', origin,
-                          path)
+            logging.debug(
+              'Removed non-pervasive static URL: %s%s', origin, path
+            )
             del self._origins[origin][path]
 
   def _remove_unversioned_urls(self) -> None:
@@ -375,8 +386,9 @@ class PervasiveResourceCollector:
           logging.debug('Removed long URL: %s%s', origin, path)
           del self._origins[origin][path]
 
-  def _create_filename_pattern(self, path: str,
-                               candidates: List[str]) -> Optional[str]:
+  def _create_filename_pattern(
+    self, path: str, candidates: List[str]
+  ) -> Optional[str]:
     """Creates a wildcard that will match only the provided filenames.
 
     Args:
@@ -446,8 +458,9 @@ class PervasiveResourceCollector:
       pattern += '*'
     return pattern
 
-  def _find_path_pattern(self, path: str,
-                         candidates: List[str]) -> Optional[str]:
+  def _find_path_pattern(
+    self, path: str, candidates: List[str]
+  ) -> Optional[str]:
     """Finds cases where one path segment has the version or hash.
 
     e.g. /maps/1.2.3/common.js
@@ -466,8 +479,10 @@ class PervasiveResourceCollector:
       if len(candidate_parts) != len(path_parts):
         return None
       for index in range(len(path_parts)):
-        if path_parts[index] != candidate_parts[
-            index] and index not in differences:
+        if (
+          path_parts[index] != candidate_parts[index]
+          and index not in differences
+        ):
           differences.append(index)
     differences.sort()
 
@@ -487,15 +502,15 @@ class PervasiveResourceCollector:
         return None
       for candidate in candidates:
         candidate_parts = candidate.split('/')
-        if (len(candidate_parts) > diff
-            and self._is_uuid(candidate_parts[diff])):
+        if len(candidate_parts) > diff and self._is_uuid(candidate_parts[diff]):
           return None
 
     # The case where a small number of path segments differ
     # and the filename is the same
     filename_matches = differences[-1] != len(path_parts) - 1
-    if len(path_parts) - len(
-        differences) > _MIN_STABLE_PATH and filename_matches:
+    if (
+      len(path_parts) - len(differences) > _MIN_STABLE_PATH and filename_matches
+    ):
       pattern = path
       for diff in differences:
         pattern = pattern.replace(f'/{path_parts[diff]}/', '/*/')
@@ -507,15 +522,17 @@ class PervasiveResourceCollector:
     # The case where the file name differs and, optionally, a small number of
     # path segments
     if differences[-1] == len(path_parts) - 1 and (
-        len(differences) == 2
-        or len(path_parts) - len(differences) > _MIN_STABLE_PATH):
+      len(differences) == 2
+      or len(path_parts) - len(differences) > _MIN_STABLE_PATH
+    ):
       filename_pattern = self._create_filename_pattern(path, candidates)
       if filename_pattern is not None:
         pattern = path
         for diff in differences[:-1]:
           pattern = pattern.replace(f'/{path_parts[diff]}/', '/*/')
-        pattern = pattern.replace(f'/{path_parts[differences[-1]]}',
-                                  f'/{filename_pattern}')
+        pattern = pattern.replace(
+          f'/{path_parts[differences[-1]]}', f'/{filename_pattern}'
+        )
         return pattern
     return None
 
@@ -549,9 +566,12 @@ class PervasiveResourceCollector:
         filepart = path.split('/')[-1]
         for ignore in _FILENAME_IGNORE:
           filepart = filepart.replace(ignore, '')
-        if (url in self._destinations and path in o
-            and self._current_date in o[path]
-            and not self._matches_existing_pattern(url)):
+        if (
+          url in self._destinations
+          and path in o
+          and self._current_date in o[path]
+          and not self._matches_existing_pattern(url)
+        ):
           dest = self._destinations[url]
           body_hash = list(o[path][self._current_date].keys())[0]
           target_size = o[path][self._current_date][body_hash]['size']
@@ -583,11 +603,15 @@ class PervasiveResourceCollector:
             s = difflib.SequenceMatcher(None, filepart, cfilepart)
             similarity = s.ratio()
             block_count = len(s.get_matching_blocks())
-            if (p != path and p not in candidates and cdest == dest
-                and similarity >= _MIN_FILENAME_RATIO
-                and block_count <= _MAX_FILENAME_MATCHING_BLOCKS
-                and abs(len(filepart) - len(cfilepart))
-                <= _MAX_FILENAME_LENGTH_DIFFERENCE):
+            if (
+              p != path
+              and p not in candidates
+              and cdest == dest
+              and similarity >= _MIN_FILENAME_RATIO
+              and block_count <= _MAX_FILENAME_MATCHING_BLOCKS
+              and abs(len(filepart) - len(cfilepart))
+              <= _MAX_FILENAME_LENGTH_DIFFERENCE
+            ):
               date_str = list(o[p].keys())[0]
               body_hash = list(o[p][date_str].keys())[0]
               size = o[p][date_str][body_hash]['size']
@@ -647,7 +671,8 @@ class PervasiveResourceCollector:
             if date_str in self._origins[origin][path]:
               for body_hash in self._origins[origin][path][date_str]:
                 total_count += self._origins[origin][path][date_str][body_hash][
-                    'count']
+                  'count'
+                ]
             counts.append(total_count)
           logging.info('Unmatched URL %s: %s%s', counts, origin, path)
 
@@ -660,10 +685,12 @@ class PervasiveResourceCollector:
         f.write(pattern)
         f.write('\n')
     # Write them out formatted for Chrome's compiled list, including expiration
-    template_file = os.path.join(os.path.dirname(__file__),
-                                 'shared_resource_checker_patterns.template')
-    cc_file = os.path.join(os.path.dirname(__file__),
-                           'shared_resource_checker_patterns.h')
+    template_file = os.path.join(
+      os.path.dirname(__file__), 'shared_resource_checker_patterns.template'
+    )
+    cc_file = os.path.join(
+      os.path.dirname(__file__), 'shared_resource_checker_patterns.h'
+    )
     with open(template_file, 'r', encoding='utf-8') as f:
       template_string = f.read()
     template = string.Template(template_string)
@@ -692,11 +719,13 @@ class PervasiveResourceCollector:
       if row_index == 12:
         row_index = 0
 
-    out = template.substitute(year=expires.year,
-                              month=expires.month,
-                              day=expires.day,
-                              patterns_comment=patterns_comment,
-                              patterns_zstd=patterns_zstd)
+    out = template.substitute(
+      year=expires.year,
+      month=expires.month,
+      day=expires.day,
+      patterns_comment=patterns_comment,
+      patterns_zstd=patterns_zstd,
+    )
     with open(cc_file, "w", encoding="utf-8") as f:
       f.write(out)
 
@@ -704,14 +733,11 @@ class PervasiveResourceCollector:
     """Remove patterns that are already covered by a more general pattern."""
     to_remove = set()
     for pattern1 in self._patterns:
+      len1 = len(re.sub(_NAMED_WILDCARD_REGEX, '', pattern1))
       for pattern2 in self._patterns:
-        len1 = len(re.sub(_NAMED_WILDCARD_REGEX, '', pattern1))
         len2 = len(re.sub(_NAMED_WILDCARD_REGEX, '', pattern2))
-        if pattern1 != pattern2 and len1 != len2:
-          shorter = pattern1 if len1 < len2 else pattern2
-          longer = pattern1 if len1 > len2 else pattern2
-          if self._url_matches_pattern(longer, shorter):
-            to_remove.add(longer)
+        if len1 < len2 and self._url_matches_pattern(pattern2, pattern1):
+          to_remove.add(pattern2)
 
     for pattern in to_remove:
       logging.info("Removed pattern %s as a duplicate", pattern)
@@ -739,8 +765,10 @@ class PervasiveResourceCollector:
 
 
 if __name__ == '__main__':
-  logging.basicConfig(level=logging.INFO,
-                      format='%(asctime)s.%(msecs)03d - %(message)s',
-                      datefmt='%H:%M:%S')
+  logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d - %(message)s',
+    datefmt='%H:%M:%S',
+  )
   collector = PervasiveResourceCollector()
   collector.run()
