@@ -129,7 +129,11 @@ class PervasiveResourceCollector:
     self._current_date = self._dates[0]
     self._bq_client: Optional[bigquery.Client] = None
     self._origins: Dict[str, Dict[str, Any]] = {}
-    self._patterns: List[str] = []
+    # Seed the list with upcoming known-pervasive resources whose URLs are changing
+    self._patterns: List[str] = [
+      'https://www.gstatic.com/recaptcha/releases/{:v1}/recaptcha_lib__{:v2}.js',
+      'https://www.gstatic.com/recaptcha/releases/{:v1}/recaptcha_challenge__{:v2}.js'
+    ]
     self._destinations: Dict[str, str] = {}
 
   def _url_matches_pattern(self, url: str, pattern: str) -> bool:
